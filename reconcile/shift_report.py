@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from intake.stations import StationDay
 from ledger.postings import Posting
+from ledger.resurvey_evidence import ResurveyReceipt
 from reconcile.day_view import load_day_view
 from reconcile.discrepancies import ReconciliationError, check_day_balance
 from reconcile.totals import recompute_totals
@@ -18,6 +19,9 @@ class ShiftReport:
     current_litres: int
     net_litres: int
     postings: tuple[Posting, ...]
+    source_litres: int = 0
+    adjustment_litres: int = 0
+    resurveys: tuple[ResurveyReceipt, ...] = ()
 
 
 def reconcile_day(warehouse, day):
@@ -29,4 +33,5 @@ def reconcile_day(warehouse, day):
     totals = recompute_totals(book)
     check_day_balance(book, totals, route.epoch)
     return ShiftReport(day, route.region, route.epoch, book.batch.batch_id, book.initial_litres,
-                       book.current_litres, totals.net_litres, book.postings)
+                       book.current_litres, totals.net_litres, book.postings,
+                       book.source_litres, book.adjustment_litres, book.resurveys)

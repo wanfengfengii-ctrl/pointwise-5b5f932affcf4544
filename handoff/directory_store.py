@@ -23,6 +23,11 @@ _SCHEMA = (
         correction_id TEXT PRIMARY KEY, station TEXT NOT NULL, day TEXT NOT NULL,
         new_litres TEXT NOT NULL, FOREIGN KEY (station, day) REFERENCES assignments (station, day)
     )''',
+    '''CREATE TABLE IF NOT EXISTS resurvey_admissions (
+        resurvey_id TEXT PRIMARY KEY, station TEXT NOT NULL, day TEXT NOT NULL,
+        batch_id TEXT NOT NULL, position INTEGER NOT NULL, content TEXT NOT NULL,
+        FOREIGN KEY (station, day) REFERENCES assignments (station, day)
+    )''',
 )
 
 

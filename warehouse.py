@@ -18,6 +18,8 @@ from intake.stations import SourceReference, StationDay
 from ledger.correction import post as post
 from ledger.day_open import open_day as open_day
 from ledger.region_store import RegionStore
+from ledger.resurvey import admit_resurvey as admit_resurvey
+from ledger.resurvey import post_resurvey as post_resurvey
 from reconcile.shift_report import reconcile_day as reconcile_day
 from storage import InvalidInput, Unavailable, identifier
 
@@ -93,6 +95,11 @@ class _LostReply(Exception):
 
 
 def run_demo():
+    _demo_daily()
+    _demo_resurvey()
+
+
+def _demo_daily():
     with TemporaryDirectory(prefix='chengpu-daybook-') as root:
         def events(name, payload):
             if name == 'candidate_copied':
@@ -142,6 +149,86 @@ def run_demo():
                     'downstream_actual': downstream_actual, 'oracle': '3 + 4 = 7, 11 - 7 = 4, 16 - 11 = 5',
                     'code_paths': ['ledger/day_open.py', 'ledger/postings.py', 'handoff/resume.py',
                                    'handoff/acceptance.py', 'reconcile/shift_report.py', 'closeout/retrieve.py']}
+        print('POINTWISE_SCENARIO ' + json.dumps(scenario, ensure_ascii=False, sort_keys=True))
+
+
+def _demo_resurvey():
+    from intake.measurements import Measurement
+    from intake.stations import SourceReference
+    from ledger.resurvey import admit_resurvey, post_resurvey
+    from storage import NotOwner
+
+    with TemporaryDirectory(prefix='chengpu-resurvey-') as root:
+        lost = {}
+
+        def events(name, payload):
+            if name == 'candidate_copied':
+                try:
+                    post_resurvey(warehouse, day, 'R1', 'east')
+                except _LostReply:
+                    return
+                raise RuntimeError('the demonstration did not encounter the lost response')
+            if name == 'resurvey_prepared' and payload.resurvey_id == 'R2' and 'moved' not in lost:
+                lost['moved'] = move(warehouse, day, 'M1', 'west')
+            if name == 'resurvey_committed' and payload.resurvey_id == 'R1':
+                lost['receipt'] = payload
+                raise _LostReply
+
+        with Warehouse(root, events=events) as warehouse:
+            _, opened = init_sample(warehouse)
+            day, batch_id = opened.day, opened.batch_id
+            missing = Measurement(None, SourceReference(day.station, 'resurvey-a', 'sheet-2/03'))
+            measured = Measurement(2, SourceReference(day.station, 'resurvey-b', 'sheet-3/03'))
+            original = freeze(warehouse, day)
+            post(warehouse, day, 'C1', 'east', 11)
+            admit_resurvey(warehouse, day, batch_id, 3, 'R2', measured)
+            admit_resurvey(warehouse, day, batch_id, 3, 'R1', missing)
+            pending = freeze(warehouse, day)
+            try:
+                post_resurvey(warehouse, day, 'R2', 'east')
+            except NotOwner:
+                late_east = True
+            else:
+                late_east = False
+        with Warehouse(root) as warehouse:
+            warehouse.close_region('east')
+            before_second = reconcile_day(warehouse, day)
+            replayed = post_resurvey(warehouse, day, 'R1', 'west')
+            second = post_resurvey(warehouse, day, 'R2', 'west')
+            late = freeze(warehouse, day)
+            warehouse.close_region('west')
+            warehouse.directory.close()
+            warehouse.sources.close()
+            first = get_frozen(warehouse, original.number)
+            middle = get_frozen(warehouse, pending.number)
+            last = get_frozen(warehouse, late.number)
+        if lost.get('receipt') != replayed or not late_east:
+            raise RuntimeError('the resurvey handoff did not preserve the lost first receipt')
+        expected = {'original': 7, 'pending': 11, 'pending_resurveys': 0,
+                    'late_region': 'west', 'source': 3, 'adjustment': 4, 'current': 7,
+                    'replayed_sequence': 2, 'replayed_delta': -4, 'replayed_issuer': 'east',
+                    'second_sequence': 3, 'second_old': None, 'second_delta': 2,
+                    'frozen_original': 7, 'frozen_pending': 11, 'frozen_late': 9,
+                    'frozen_late_source': 5, 'frozen_late_adjustment': 4}
+        actual = {'original': first.current_litres, 'pending': middle.current_litres,
+                  'pending_resurveys': len(middle.resurveys),
+                  'late_region': before_second.region, 'source': before_second.source_litres,
+                  'adjustment': before_second.adjustment_litres, 'current': before_second.current_litres,
+                  'replayed_sequence': replayed.sequence, 'replayed_delta': replayed.delta,
+                  'replayed_issuer': replayed.issued_region,
+                  'second_sequence': second.sequence, 'second_old': second.before.litres,
+                  'second_delta': second.delta,
+                  'frozen_original': first.current_litres, 'frozen_pending': middle.current_litres,
+                  'frozen_late': last.current_litres, 'frozen_late_source': last.source_litres,
+                  'frozen_late_adjustment': last.adjustment_litres}
+        if actual != expected:
+            raise RuntimeError(f'resurvey reconciliation mismatch {actual!r}')
+        scenario = {'case_id': 'moved_resurvey', 'input': {'day': day.key,
+                    'corrections': [['C1', 11]], 'resurveys': [['R2', 3, 2], ['R1', 3, None]],
+                    'target': 'west'}, 'expected': expected, 'actual': actual,
+                    'oracle': '3 + 4 = 7, 11 - 4 = 7, 7 + 2 = 9, 7 = 3 + 4, 9 = 5 + 4',
+                    'code_paths': ['ledger/resurvey.py', 'ledger/postings.py', 'handoff/resume.py',
+                                   'reconcile/discrepancies.py', 'closeout/facts.py']}
         print('POINTWISE_SCENARIO ' + json.dumps(scenario, ensure_ascii=False, sort_keys=True))
 
 

@@ -31,8 +31,12 @@ python3 -B -m warehouse demo
 | `reconcile_day(w, day)` | `ShiftReport`，含承办区、初值、现值、按提交次序排列的分录及净差合计。 |
 | `freeze(w, day)` | `FreezeResult`，含冻结号、站日及冻结升数。每次成功冻结分配独立编号。 |
 | `get_frozen(w, number)` | `FrozenFacts`，含原序源批、初值、冻结时现值、承办区代次及所见正式分录。 |
+| `admit_resurvey(w, day, batch_id, position, id, measurement)` | `ResurveyAdmission`，含站日、开户批、位置、复勘号及带出处的采样。仅形成待办。 |
+| `post_resurvey(w, day, id, region)` | `ResurveyReceipt`，含实际前后像、正式序号、净差及原签发区代次。 |
 
 计量和差额均为精确整数升数。布尔值无计量资格。`None` 表示有出处的缺测，`0` 是有效观测。零差更正也占一个正式序号。分别保存目录、各区账、源批和冻结档案。初始化先登记待发布承办，再写区域初账，接着发布。换区期间目标先接收候选，正式交接从旧区本地结清开始。结清前已成立的更正随其首执一起移交，换区自身增加零笔计量分录。目录发布后可用 `w.close_region('east')` 关闭旧区句柄，西区仍可继续办理。冻结档案提交后可独立领取。
+
+原采样位复勘按 `RESURVEY.md` 办理：受理绑定开户批和位置，过账以该位实际旧像计算净差，直接累加到日值而不覆盖既有人工总量调整。`reconcile_day` 与 `get_frozen` 另给出 `source_litres`、`adjustment_litres` 和 `resurveys`，前两者之和等于现值。复勘可随结清移交，未过账的受理待办由新区办理。旧格式冻结件仍按原批领取，`resurveys` 为空元组。
 
 `storage` 定义 `InvalidInput`、`Conflict`、`NotFound`、`NotOwner`、`Unavailable` 和 `InconsistentBook`。`reconcile.discrepancies.ReconciliationError` 报告不完整或不一致的正式账。存储失败保留 SQLite 异常供调用者区分。跨库操作中断可能留下合法的待办，按原参数重投继续处理。`Warehouse(events=callback)` 可接收本地事务结束后的 `(event, payload)`，用于按明确顺序观察和暂停操作。
 

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from closeout.facts import capture_facts
 from intake.stations import StationDay
+from ledger.resurvey_evidence import ResurveyReceipt
 from reconcile.day_view import load_day_view
 from reconcile.discrepancies import check_day_balance
 from reconcile.totals import recompute_totals
@@ -12,6 +13,9 @@ class FreezeResult:
     number: int
     day: StationDay
     litres: int
+    source_litres: int = 0
+    adjustment_litres: int = 0
+    resurveys: tuple[ResurveyReceipt, ...] = ()
 
 
 def freeze(warehouse, day):
@@ -19,4 +23,5 @@ def freeze(warehouse, day):
     book, route = view.book, view.assignment
     check_day_balance(book, recompute_totals(book), route.epoch)
     facts = warehouse.archive.save_frozen(capture_facts(book, route.region, route.epoch))
-    return FreezeResult(facts.number, facts.day, facts.current_litres)
+    return FreezeResult(facts.number, facts.day, facts.current_litres,
+                        facts.source_litres, facts.adjustment_litres, facts.resurveys)

@@ -33,6 +33,21 @@ _SCHEMA = (
         FOREIGN KEY (station, day, epoch, correction_id)
             REFERENCES postings (station, day, epoch, correction_id)
     )''',
+    '''CREATE TABLE IF NOT EXISTS resurvey_postings (
+        station TEXT NOT NULL, day TEXT NOT NULL, epoch INTEGER NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence > 0),
+        resurvey_id TEXT NOT NULL, body TEXT NOT NULL,
+        PRIMARY KEY (station, day, epoch, sequence),
+        UNIQUE (station, day, epoch, resurvey_id),
+        FOREIGN KEY (station, day, epoch) REFERENCES books (station, day, epoch)
+    )''',
+    '''CREATE TABLE IF NOT EXISTS resurvey_receipts (
+        station TEXT NOT NULL, day TEXT NOT NULL, epoch INTEGER NOT NULL,
+        resurvey_id TEXT NOT NULL, body TEXT NOT NULL,
+        PRIMARY KEY (station, day, epoch, resurvey_id),
+        FOREIGN KEY (station, day, epoch, resurvey_id)
+            REFERENCES resurvey_postings (station, day, epoch, resurvey_id)
+    )''',
 )
 
 _KEY = 'station = ? AND day = ? AND epoch = ?'
@@ -50,6 +65,8 @@ class BookImage:
     frontier: int
     postings: tuple[tuple[int, str, str], ...]
     receipts: tuple[tuple[str, str], ...]
+    resurvey_postings: tuple[tuple[int, str, str], ...] = ()
+    resurvey_receipts: tuple[tuple[str, str], ...] = ()
 
     def digest(self):
         return sha256(encode(astuple(self)).encode('utf-8')).hexdigest()
@@ -95,8 +112,15 @@ class RegionStore(Database):
         receipts = connection.execute(
             f'SELECT correction_id, body FROM receipts WHERE {_KEY} ORDER BY correction_id', key
         )
+        resurvey_postings = connection.execute(
+            f'SELECT sequence, resurvey_id, body FROM resurvey_postings WHERE {_KEY} ORDER BY sequence', key
+        )
+        resurvey_receipts = connection.execute(
+            f'SELECT resurvey_id, body FROM resurvey_receipts WHERE {_KEY} ORDER BY resurvey_id', key
+        )
         return BookImage(header['batch'], header['initial_litres'], header['current_litres'],
-                         header['frontier'], tuple(map(tuple, postings)), tuple(map(tuple, receipts)))
+                         header['frontier'], tuple(map(tuple, postings)), tuple(map(tuple, receipts)),
+                         tuple(map(tuple, resurvey_postings)), tuple(map(tuple, resurvey_receipts)))
 
     def read_day(self, day, epoch):
         with self.transaction() as connection:
@@ -113,6 +137,8 @@ class RegionStore(Database):
                     return
                 connection.execute(f'DELETE FROM receipts WHERE {_KEY}', key)
                 connection.execute(f'DELETE FROM postings WHERE {_KEY}', key)
+                connection.execute(f'DELETE FROM resurvey_receipts WHERE {_KEY}', key)
+                connection.execute(f'DELETE FROM resurvey_postings WHERE {_KEY}', key)
                 connection.execute(
                     f'UPDATE books SET batch = ?, initial_litres = ?, current_litres = ?, frontier = ? WHERE {_KEY}',
                     (image.batch, image.initial_litres, image.current_litres, image.frontier, *key),
@@ -128,4 +154,12 @@ class RegionStore(Database):
             )
             connection.executemany(
                 'INSERT INTO receipts VALUES (?, ?, ?, ?, ?)', ((*key, *row) for row in image.receipts)
+            )
+            connection.executemany(
+                'INSERT INTO resurvey_postings VALUES (?, ?, ?, ?, ?, ?)',
+                ((*key, *row) for row in image.resurvey_postings)
+            )
+            connection.executemany(
+                'INSERT INTO resurvey_receipts VALUES (?, ?, ?, ?, ?)',
+                ((*key, *row) for row in image.resurvey_receipts)
             )
